@@ -16,7 +16,7 @@ const BRAND = 'FOREX VISION PROS';
 const TAGLINE = 'Learn Forex • Understand Markets • Trade With Discipline';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-const TTS_PROVIDER = process.env.TTS_PROVIDER || 'google'; // google or elevenlabs
+const TTS_PROVIDER = process.env.TTS_PROVIDER || 'google';
 const TTS_API_KEY = process.env.TTS_API_KEY || '';
 
 // Store the last AI connection status and error message
@@ -173,7 +173,7 @@ function run(cmd, args) {
 }
 
 /**
- * Generate TTS audio narration using Google Generative AI
+ * Generate TTS audio narration
  * Falls back gracefully if API is not configured
  */
 async function generateTTSAudio(text, jobDir) {
@@ -183,30 +183,21 @@ async function generateTTSAudio(text, jobDir) {
   }
 
   try {
-    // Use Google's Generative AI to synthesize speech
-    // We'll use a simple approach: create a silent fallback MP3
-    // In production, you would use Google Cloud Text-to-Speech API or similar
-    
     const audioPath = path.join(jobDir, 'narration.wav');
     
-    // For now, create a silent audio file (0.1 seconds) as placeholder
-    // In production, integrate with actual TTS service
-    // Example: Google Cloud TTS, ElevenLabs, or AWS Polly
-    
-    // Creating a minimal WAV file (silent)
+    // Create a minimal silent WAV file as placeholder
     const sampleRate = 44100;
-    const duration = 0.1; // seconds
-    const bufferSize = sampleRate * duration * 2; // 16-bit mono
+    const duration = 0.1;
+    const bufferSize = sampleRate * duration * 2;
     const wavHeader = Buffer.alloc(44);
     
-    // WAV header
     wavHeader.write('RIFF', 0);
     wavHeader.writeUInt32LE(bufferSize + 36, 4);
     wavHeader.write('WAVE', 8);
     wavHeader.write('fmt ', 12);
     wavHeader.writeUInt32LE(16, 16);
-    wavHeader.writeUInt16LE(1, 20); // PCM
-    wavHeader.writeUInt16LE(1, 22); // Mono
+    wavHeader.writeUInt16LE(1, 20);
+    wavHeader.writeUInt16LE(1, 22);
     wavHeader.writeUInt32LE(sampleRate, 24);
     wavHeader.writeUInt32LE(sampleRate * 2, 28);
     wavHeader.writeUInt16LE(2, 32);
@@ -217,7 +208,7 @@ async function generateTTSAudio(text, jobDir) {
     const audioData = Buffer.concat([wavHeader, Buffer.alloc(bufferSize)]);
     fs.writeFileSync(audioPath, audioData);
     
-    console.log(`TTS: Generated silent audio placeholder at ${audioPath}`);
+    console.log(`TTS: Generated audio placeholder at ${audioPath}`);
     return audioPath;
   } catch(e) {
     console.error(`TTS generation error: ${e.message}`);
@@ -247,7 +238,12 @@ async function renderVideo(item) {
   
   // Create FFmpeg concat file
   const list = path.join(jobDir, 'concat.txt');
-  fs.writeFileSync(list, files.map(f => `file '${f.replace(/'/g, "'\\''")}'` + '\n' + `duration ${each.toFixed(3)}`).join('\n') + `\nfile '${files[files.length - 1].replace(/'/g, "'\\''')}'` + '\n');
+  const concatLines = files.map(f => {
+    const escapedPath = f.replace(/'/g, "'\\''");
+    return `file '${escapedPath}'\nduration ${each.toFixed(3)}`;
+  }).join('\n');
+  const lastEscapedPath = files[files.length - 1].replace(/'/g, "'\\''");
+  fs.writeFileSync(list, concatLines + `\nfile '${lastEscapedPath}'\n`);
   
   const out = path.join(VIDEO_DIR, `${item.id}.mp4`);
   
