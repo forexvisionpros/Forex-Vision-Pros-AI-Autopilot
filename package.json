@@ -1,0 +1,13 @@
+{
+  "name": "forex-vision-pros-ai-autopilot",
+  "version": "1.0.0",
+  "description": "Forex Vision Pros free-first AI education content and video autopilot",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ffmpeg-static": "^5.2.0",
+    "sharp": "^0.34.3"
+  }
+}
