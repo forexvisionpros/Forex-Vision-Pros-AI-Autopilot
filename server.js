@@ -14,8 +14,11 @@ const VIDEO_DIR = path.join(ROOT, 'videos');
 const DB_FILE = path.join(DATA_DIR, 'content.json');
 const BRAND = 'FOREX VISION PROS';
 const TAGLINE = 'Learn Forex • Understand Markets • Trade With Discipline';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+
+// Store the last AI connection status and error message
+let aiStatus = { connected: false, model: GEMINI_MODEL, error: null };
 
 for (const d of [DATA_DIR, VIDEO_DIR]) fs.mkdirSync(d, { recursive: true });
 if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify({ items: [], settings: { autopilot: false, topicIndex: 0 } }, null, 2));
@@ -62,7 +65,7 @@ function fallbackContent(topic, level='Beginner', angle='') {
   return {
     title: `${clean} | Forex Vision Pros`,
     hook: `Forex made simple: let us understand ${clean.toLowerCase()} in under a minute.`,
-    script: `Welcome to Forex Vision Pros. Today we are learning ${clean}. ${angle || 'This is an educational explanation designed for beginners.'} The key idea is to understand the concept before risking real money. Use risk management, practice on a demo account, and never assume a setup can guarantee profit. Follow Forex Vision Pros for the next lesson.`,
+    script: `Welcome to Forex Vision Pros. Today we are learning ${clean}. ${angle || 'This is an educational explanation designed for beginners.'} The key idea is to understand the concept before trading it.`,
     scenes: [
       `Forex Vision Pros\n${clean}`,
       `START HERE\n${clean}`,
@@ -78,15 +81,25 @@ function fallbackContent(topic, level='Beginner', angle='') {
 
 async function geminiContent(topic, level, angle) {
   if (!process.env.GEMINI_API_KEY) return fallbackContent(topic, level, angle);
-  const prompt = `You are the content editor for FOREX VISION PROS, a Forex education brand. Create a factual, beginner-friendly social video about: ${topic}. Level: ${level}. Angle: ${angle}. Do not promise profits, predict prices as certainty, or give personalized financial advice. Include a short risk disclaimer. Return ONLY valid JSON with keys: title, hook, script, scenes (array of 6 short scene texts), description, hashtags. Each scene should be concise enough for a vertical video. Keep script around 110-150 words.`;
+  const prompt = `You are the content editor for FOREX VISION PROS, a Forex education brand. Create a factual, beginner-friendly social video about: ${topic}. Level: ${level}. Angle: ${angle}. Do not provide financial advice. Return valid JSON: {title, hook, script, scenes:[...], description, hashtags}`;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
-  const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json','x-goog-api-key':process.env.GEMINI_API_KEY}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}], generationConfig:{responseMimeType:'application/json'}})});
-  const j = await r.json();
-  if (!r.ok) throw new Error(j?.error?.message || 'Gemini request failed');
-  const text = j?.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('') || '';
-  const cleaned = text.replace(/^```json\s*/i,'').replace(/```$/,'').trim();
-  const parsed = JSON.parse(cleaned);
-  return { ...fallbackContent(topic, level, angle), ...parsed };
+  try {
+    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json','x-goog-api-key':process.env.GEMINI_API_KEY}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7}}) });
+    const j = await r.json();
+    if (!r.ok) {
+      const errMsg = j?.error?.message || 'Gemini request failed';
+      aiStatus = { connected: false, model: GEMINI_MODEL, error: errMsg };
+      throw new Error(errMsg);
+    }
+    aiStatus = { connected: true, model: GEMINI_MODEL, error: null };
+    const text = j?.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('') || '';
+    const cleaned = text.replace(/^```json\s*/i,'').replace(/```$/,'').trim();
+    const parsed = JSON.parse(cleaned);
+    return { ...fallbackContent(topic, level, angle), ...parsed };
+  } catch(e) {
+    aiStatus = { connected: false, model: GEMINI_MODEL, error: e.message };
+    return fallbackContent(topic, level, angle);
+  }
 }
 
 function svgSlide(text, index, total, duration) {
@@ -130,7 +143,7 @@ async function renderVideo(item) {
   const list = path.join(jobDir,'concat.txt');
   fs.writeFileSync(list, files.map(f=>`file '${f.replace(/'/g,"'\\''")}'\nduration ${each.toFixed(3)}`).join('\n')+`\nfile '${files[files.length-1].replace(/'/g,"'\\''")}'\n`);
   const out = path.join(VIDEO_DIR,`${item.id}.mp4`);
-  await run(ffmpeg,['-y','-f','concat','-safe','0','-i',list,'-vf','scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2','-r','30','-c:v','libx264','-pix_fmt','yuv420p','-movflags','+faststart','-an',out]);
+  await run(ffmpeg,['-y','-f','concat','-safe','0','-i',list,'-vf','scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2','-r','30','-c:v','libx264','-pix_fmt','yuv420p','-preset','faster','-b:v','2000k',out]);
   return `/videos/${item.id}.mp4`;
 }
 
@@ -148,14 +161,26 @@ async function createItem(body) {
   return item;
 }
 
-app.get('/api/status',(req,res)=>res.json({ok:true,brand:BRAND,geminiConfigured:!!process.env.GEMINI_API_KEY,model:GEMINI_MODEL,ffmpeg:!!ffmpeg,version:'1.0.0'}));
+app.get('/api/status',(req,res)=>{
+  let statusMsg = 'Engine online • Video renderer ' + (ffmpeg?'ready':'missing');
+  if (!process.env.GEMINI_API_KEY) {
+    statusMsg += ' • AI free-fallback (no API key)';
+  } else if (aiStatus.error) {
+    statusMsg += ` • AI connection error: ${aiStatus.error}`;
+  } else if (aiStatus.connected) {
+    statusMsg += ` • AI connected • Model: ${aiStatus.model}`;
+  } else {
+    statusMsg += ` • AI not yet tested • Model: ${aiStatus.model}`;
+  }
+  res.json({ok:true, brand:BRAND, geminiConfigured:!!process.env.GEMINI_API_KEY, model:GEMINI_MODEL, ffmpeg:!!ffmpeg, version:'1.0.0', statusMessage: statusMsg, aiStatus: aiStatus});
+});
 app.get('/api/content',(req,res)=>res.json(loadDB().items.slice(0,50)));
 app.get('/api/lessons',(req,res)=>res.json(lessonBank));
 app.get('/api/settings',(req,res)=>res.json(loadDB().settings));
 app.post('/api/settings',(req,res)=>{const db=loadDB();db.settings={...db.settings,...req.body};saveDB(db);res.json(db.settings);});
 app.post('/api/generate',async(req,res)=>{try{const item=await createItem(req.body);res.json(item);}catch(e){res.status(500).json({error:e.message});}});
 app.post('/api/generate-lesson',async(req,res)=>{try{const db=loadDB(); const i=(db.settings.topicIndex||0)%lessonBank.length; const l=lessonBank[i]; db.settings.topicIndex=i+1; saveDB(db); const item=await createItem(l); res.json(item);}catch(e){res.status(500).json({error:e.message});}});
-app.delete('/api/content/:id',(req,res)=>{const db=loadDB();db.items=db.items.filter(x=>x.id!==req.params.id);saveDB(db);try{fs.rmSync(path.join(VIDEO_DIR,req.params.id),{recursive:true,force:true});fs.rmSync(path.join(VIDEO_DIR,`${req.params.id}.mp4`),{force:true});}catch{}res.json({ok:true});});
+app.delete('/api/content/:id',(req,res)=>{const db=loadDB();db.items=db.items.filter(x=>x.id!==req.params.id);saveDB(db);try{fs.rmSync(path.join(VIDEO_DIR,req.params.id),{recursive:true,force:true});}catch(e){}res.json({ok:true});});
 
 app.get('/health',(req,res)=>res.json({ok:true,service:'Forex Vision Pros AI Autopilot'}));
 
