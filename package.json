@@ -12,6 +12,8 @@
   "dependencies": {
     "express": "^5.1.0",
     "ffmpeg-static": "^5.2.0",
-    "sharp": "^0.34.3"
+    "sharp": "^0.34.3",
+    "gtts-api": "^2.2.1",
+    "fluent-ffmpeg": "^2.1.2"
   }
 }
