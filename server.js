@@ -21,6 +21,12 @@ const TTS_PROVIDER = process.env.TTS_PROVIDER || 'google-translate';
 const TTS_API_KEY = process.env.TTS_API_KEY || '';
 const FFPROBE_PATH = ffprobeStatic && ffprobeStatic.path ? ffprobeStatic.path : 'ffprobe';
 
+// Professional video format constants
+const VIDEO_WIDTH = 1080;
+const VIDEO_HEIGHT = 1920;
+const VIDEO_FPS = 30;
+const SAFE_MARGIN = 80;
+
 // Store the last AI connection status and error message
 let aiStatus = { connected: false, model: GEMINI_MODEL, error: null };
 
@@ -81,6 +87,22 @@ function wrapText(text, max=34) {
   }
   if (line) lines.push(line);
   return lines.slice(0, 5);
+}
+
+function wrapCaption(text, maxChars=60) {
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  const lines = [];
+  let line = '';
+  for (const w of words) {
+    if ((line + ' ' + w).trim().length > maxChars) {
+      if (line) lines.push(line.trim());
+      line = w;
+    } else {
+      line = (line + ' ' + w).trim();
+    }
+  }
+  if (line) lines.push(line.trim());
+  return lines.slice(0, 3);
 }
 
 const lessonBank = [
@@ -144,22 +166,89 @@ async function geminiContent(topic, level, angle) {
   }
 }
 
-function svgSlide(text, index, total, duration) {
-  const lines = wrapText(text);
-  const tspans = lines.map((line,i)=>`<tspan x="360" dy="${i===0?0:76}">${esc(line)}</tspan>`).join('');
-  const progress = Math.round(((index+1)/total)*100);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">
-    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#07111f"/><stop offset="1" stop-color="#102f45"/></linearGradient></defs>
-    <rect width="720" height="1280" fill="url(#g)"/>
-    <circle cx="620" cy="140" r="190" fill="#19d3ae" opacity=".08"/><circle cx="90" cy="1110" r="250" fill="#4ea1ff" opacity=".08"/>
-    <text x="42" y="70" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#19d3ae">${BRAND}</text>
-    <text x="42" y="112" font-family="Arial, sans-serif" font-size="17" fill="#b7c6d6">${TAGLINE}</text>
-    <line x1="42" y1="145" x2="678" y2="145" stroke="#29465b"/>
-    <text x="360" y="520" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="700" fill="#ffffff">${tspans}</text>
-    <rect x="42" y="1160" width="636" height="8" rx="4" fill="#243b50"/><rect x="42" y="1160" width="${636*progress/100}" height="8" rx="4" fill="#19d3ae"/>
-    <text x="42" y="1215" font-family="Arial, sans-serif" font-size="18" fill="#9db0c2">Educational content • Not financial advice</text>
-    <text x="678" y="1215" text-anchor="end" font-family="Arial, sans-serif" font-size="18" fill="#9db0c2">${index+1}/${total}</text>
+function createSimpleCandleChart() {
+  const w = VIDEO_WIDTH - 2*SAFE_MARGIN;
+  const h = 400;
+  const candles = [
+    { o: 1.1000, h: 1.1050, l: 1.0950, c: 1.1020, x: 80 },
+    { o: 1.1020, h: 1.1100, l: 1.1000, c: 1.1080, x: 200 },
+    { o: 1.1080, h: 1.1150, l: 1.1050, c: 1.1120, x: 320 }
+  ];
+  const minPrice = 1.0950;
+  const maxPrice = 1.1150;
+  const range = maxPrice - minPrice;
+  
+  let candleSvg = '';
+  for (const c of candles) {
+    const yh = h - ((c.h - minPrice) / range) * h;
+    const yl = h - ((c.l - minPrice) / range) * h;
+    const yo = h - ((c.o - minPrice) / range) * h;
+    const yc = h - ((c.c - minPrice) / range) * h;
+    const bodyTop = Math.min(yo, yc);
+    const bodyHeight = Math.abs(yo - yc) || 2;
+    const color = c.c >= c.o ? '#19d3ae' : '#ff6b6b';
+    
+    candleSvg += `<line x1="${c.x}" y1="${yh}" x2="${c.x}" y2="${yl}" stroke="${color}" stroke-width="1"/><rect x="${c.x-10}" y="${bodyTop}" width="20" height="${bodyHeight}" fill="${color}" opacity="0.8"/>`;
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="background: rgba(12, 26, 40, 0.6); border-radius: 8px; margin: 20px auto;">
+    <text x="${w/2}" y="30" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#19d3ae" font-weight="700">EUR/USD 1H Chart</text>
+    ${candleSvg}
+    <line x1="0" y1="${h-1}" x2="${w}" y2="${h-1}" stroke="#29465b" stroke-width="1"/>
   </svg>`;
+}
+
+function createProfessionalSlide(content, captionText, slideType='content', progress=0) {
+  const lines = wrapCaption(captionText, 65);
+  const captionSpacing = 50;
+  let captionSvg = '';
+  
+  for (let i = 0; i < lines.length; i++) {
+    const y = VIDEO_HEIGHT - 280 + (i * captionSpacing);
+    captionSvg += `<rect x="${SAFE_MARGIN}" y="${y-35}" width="${VIDEO_WIDTH-2*SAFE_MARGIN}" height="50" fill="rgba(12, 26, 40, 0.85)" rx="4"/><text x="${VIDEO_WIDTH/2}" y="${y}" text-anchor="middle" font-family="Arial, sans-serif" font-size="38" font-weight="700" fill="#ffffff">${esc(lines[i])}</text>`;
+  }
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" viewBox="0 0 ${VIDEO_WIDTH} ${VIDEO_HEIGHT}">
+    <defs>
+      <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#06101b"/><stop offset="1" stop-color="#0c1a28"/></linearGradient>
+    </defs>
+    <rect width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" fill="url(#bgGrad)"/>
+    <circle cx="${VIDEO_WIDTH-150}" cy="200" r="250" fill="#19d3ae" opacity="0.06"/>
+    <circle cx="150" cy="${VIDEO_HEIGHT-300}" r="300" fill="#4ea1ff" opacity="0.05"/>`;
+
+  // Header with branding
+  svg += `<rect x="0" y="0" width="${VIDEO_WIDTH}" height="120" fill="rgba(12, 26, 40, 0.9)"/>
+    <line x1="${SAFE_MARGIN}" y1="115" x2="${VIDEO_WIDTH-SAFE_MARGIN}" y2="115" stroke="#29465b" stroke-width="2"/>
+    <text x="${SAFE_MARGIN}" y="50" font-family="Arial, sans-serif" font-size="32" font-weight="700" fill="#19d3ae">${BRAND}</text>
+    <text x="${SAFE_MARGIN}" y="85" font-family="Arial, sans-serif" font-size="14" fill="#91a6b9">${TAGLINE}</text>`;
+
+  // Main content area
+  if (slideType === 'title') {
+    svg += `<text x="${VIDEO_WIDTH/2}" y="${VIDEO_HEIGHT/2-100}" text-anchor="middle" font-family="Arial, sans-serif" font-size="72" font-weight="700" fill="#19d3ae">${esc(content.split('\n')[0])}</text>
+      <text x="${VIDEO_WIDTH/2}" y="${VIDEO_HEIGHT/2+50}" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" fill="#ffffff">${esc(content.split('\n').slice(1).join(' '))}</text>`;
+  } else if (slideType === 'chart') {
+    svg += `<text x="${VIDEO_WIDTH/2}" y="200" text-anchor="middle" font-family="Arial, sans-serif" font-size="44" font-weight="700" fill="#ffffff">${esc(content)}</text>
+      <rect x="${SAFE_MARGIN}" y="280" width="${VIDEO_WIDTH-2*SAFE_MARGIN}" height="400" fill="rgba(12, 26, 40, 0.6)" rx="8" stroke="#29465b" stroke-width="2"/>
+      <text x="${SAFE_MARGIN+30}" y="520" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#19d3ae">EUR/USD Movement</text>
+      <line x1="${SAFE_MARGIN+30}" y1="600" x2="${SAFE_MARGIN+80}" y2="550" stroke="#19d3ae" stroke-width="3"/>
+      <circle cx="${SAFE_MARGIN+80}" cy="550" r="8" fill="#19d3ae"/>
+      <line x1="${SAFE_MARGIN+80}" y1="550" x2="${SAFE_MARGIN+200}" y2="480" stroke="#19d3ae" stroke-width="3"/>
+      <circle cx="${SAFE_MARGIN+200}" cy="480" r="8" fill="#19d3ae"/>`;
+  } else {
+    svg += `<text x="${VIDEO_WIDTH/2}" y="200" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="700" fill="#ffffff">${esc(content)}</text>`;
+  }
+
+  // Caption area
+  svg += captionSvg;
+
+  // Footer with progress and disclaimer
+  svg += `<rect x="0" y="${VIDEO_HEIGHT-80}" width="${VIDEO_WIDTH}" height="80" fill="rgba(12, 26, 40, 0.95)"/>
+    <line x1="${SAFE_MARGIN}" y1="${VIDEO_HEIGHT-80}" x2="${VIDEO_WIDTH-SAFE_MARGIN}" y2="${VIDEO_HEIGHT-80}" stroke="#29465b" stroke-width="2"/>
+    <rect x="${SAFE_MARGIN}" y="${VIDEO_HEIGHT-50}" width="${(VIDEO_WIDTH-2*SAFE_MARGIN)*progress}" height="6" rx="3" fill="#19d3ae"/>
+    <rect x="${SAFE_MARGIN}" y="${VIDEO_HEIGHT-50}" width="${VIDEO_WIDTH-2*SAFE_MARGIN}" height="6" rx="3" fill="#243b50" opacity="0.6"/>
+    <text x="${SAFE_MARGIN}" y="${VIDEO_HEIGHT-15}" font-family="Arial, sans-serif" font-size="12" fill="#9db0c2">Educational content • Not financial advice</text></svg>`;
+
+  return svg;
 }
 
 function run(cmd, args) {
@@ -219,6 +308,13 @@ async function probeMedia(filePath) {
   }
 }
 
+/**
+ * ============================================
+ * TTS AUDIO GENERATION - UNCHANGED
+ * ============================================
+ * The existing working TTS implementation
+ * is preserved exactly as-is.
+ */
 async function generateTTSAudio(text, jobDir) {
   const cleanText = sanitizeNarrationText(text);
   if (!cleanText) {
@@ -285,6 +381,13 @@ async function generateTTSAudio(text, jobDir) {
   return audioPath;
 }
 
+/**
+ * ============================================
+ * VIDEO RENDERING - UPGRADED VISUAL
+ * ============================================
+ * Professional 1080x1920 format with captions,
+ * branding, and chart visuals.
+ */
 async function renderVideo(item) {
   const jobDir = path.join(VIDEO_DIR, item.id);
   fs.mkdirSync(jobDir, { recursive: true });
@@ -297,13 +400,21 @@ async function renderVideo(item) {
   const each = duration / scenes.length;
   const files = [];
 
+  // Generate professional slides with captions
   for (let i = 0; i < scenes.length; i++) {
-    const svg = svgSlide(scenes[i], i, scenes.length, duration);
+    const progress = (i + 1) / scenes.length;
+    const sceneText = extractText(scenes[i]);
+    let slideType = 'content';
+    if (i === 0) slideType = 'title';
+    if (sceneText.toLowerCase().includes('chart') || sceneText.toLowerCase().includes('movement')) slideType = 'chart';
+
+    const svg = createProfessionalSlide(sceneText, sceneText, slideType, progress);
     const png = path.join(jobDir, `slide-${i}.png`);
     await sharp(Buffer.from(svg)).png().toFile(png);
     files.push(png);
   }
 
+  // Create FFmpeg concat file
   const list = path.join(jobDir, 'concat.txt');
   const concatLines = files.map(f => {
     const escapedPath = f.replace(/'/g, "'\\''");
@@ -314,13 +425,21 @@ async function renderVideo(item) {
 
   const out = path.join(VIDEO_DIR, `${item.id}.mp4`);
   const videoOnly = path.join(jobDir, 'video-only.mp4');
+
+  // Generate professional vertical video (1080x1920)
   await run(ffmpeg, [
     '-y', '-f', 'concat', '-safe', '0', '-i', list,
-    '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2',
-    '-r', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-t', duration.toString(),
+    '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
+    '-r', String(VIDEO_FPS), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-t', duration.toString(),
     videoOnly
   ]);
 
+  /**
+   * ============================================
+   * TTS AUDIO MERGE - UNCHANGED
+   * ============================================
+   * The existing audio pipeline is preserved.
+   */
   const script = extractText(item.script || item.hook || item.title || item.topic);
   let audioPath = null;
 
@@ -430,7 +549,7 @@ app.get('/api/status', (req, res) => {
   }
 
   statusMsg += ' • ' + ttsStatus;
-  res.json({ ok: true, brand: BRAND, geminiConfigured: !!process.env.GEMINI_API_KEY, model: GEMINI_MODEL, ffmpeg: !!ffmpeg, version: '1.0.0', statusMessage: statusMsg, aiStatus: aiStatus, ttsStatus: ttsStatus });
+  res.json({ ok: true, brand: BRAND, geminiConfigured: !!process.env.GEMINI_API_KEY, model: GEMINI_MODEL, ffmpeg: !!ffmpeg, version: '1.0.1', statusMessage: statusMsg, aiStatus: aiStatus, ttsStatus: ttsStatus, videoFormat: `${VIDEO_WIDTH}x${VIDEO_HEIGHT} 9:16` });
 });
 
 app.get('/api/content', (req, res) => res.json(loadDB().items.slice(0, 50)));
