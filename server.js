@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const ffmpeg = require('ffmpeg-static');
+const ffprobeStatic = require('ffprobe-static');
 const sharp = require('sharp');
 
 const app = express();
@@ -16,8 +17,9 @@ const BRAND = 'FOREX VISION PROS';
 const TAGLINE = 'Learn Forex • Understand Markets • Trade With Discipline';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-const TTS_PROVIDER = process.env.TTS_PROVIDER || 'google';
+const TTS_PROVIDER = process.env.TTS_PROVIDER || 'google-translate';
 const TTS_API_KEY = process.env.TTS_API_KEY || '';
+const FFPROBE_PATH = ffprobeStatic && ffprobeStatic.path ? ffprobeStatic.path : 'ffprobe';
 
 // Store the last AI connection status and error message
 let aiStatus = { connected: false, model: GEMINI_MODEL, error: null };
@@ -55,7 +57,6 @@ function extractText(data) {
     if (data.content) return extractText(data.content);
     if (data.message) return extractText(data.message);
     if (data.description) return extractText(data.description);
-    // Try to find any string value in the object
     for (const key in data) {
       const val = data[key];
       if (typeof val === 'string' && val.trim().length > 0) return val.trim();
@@ -66,7 +67,6 @@ function extractText(data) {
 }
 
 function wrapText(text, max=34) {
-  // Safely extract text from any object/array/string
   const cleanText = extractText(text);
   const words = cleanText.split(/\s+/).filter(w => w.length > 0);
   const lines = [];
@@ -107,7 +107,7 @@ function fallbackContent(topic, level='Beginner', angle='') {
   return {
     title: `${clean} | Forex Vision Pros`,
     hook: `Forex made simple: let us understand ${clean.toLowerCase()} in under a minute.`,
-    script: `Welcome to Forex Vision Pros. Today we are learning ${clean}. ${angle || 'This is an educational explanation designed for beginners.'} The key idea is to understand the concept before trading.`,
+    script: `Welcome to Forex Vision Pros. Today we are learning ${clean}. ${angle || 'This is an educational explanation designed for beginners.'} The key idea is to understand the concept before trading it. Always use risk management and never assume a strategy guarantees profit.`,
     scenes: [
       `Forex Vision Pros\n${clean}`,
       `START HERE\n${clean}`,
@@ -123,10 +123,10 @@ function fallbackContent(topic, level='Beginner', angle='') {
 
 async function geminiContent(topic, level, angle) {
   if (!process.env.GEMINI_API_KEY) return fallbackContent(topic, level, angle);
-  const prompt = `You are the content editor for FOREX VISION PROS, a Forex education brand. Create a factual, beginner-friendly social video about: ${topic}. Level: ${level}. Angle: ${angle}. Do NOT guess or invent information. Return ONLY valid JSON with: {title, hook, script, scenes: [str], description, hashtags}. Each scene is a concise text string for a video slide.`;
+  const prompt = `You are the content editor for FOREX VISION PROS, a Forex education brand. Create a factual, beginner-friendly social video about: ${topic}. Level: ${level}. Angle: ${angle}. Do not use financial advice claims or guarantee profits. Return valid JSON with keys title, hook, script, scenes, description, hashtags.`;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
   try {
-    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json','x-goog-api-key':process.env.GEMINI_API_KEY}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7,maxOutputTokens:1000}}) });
+    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json','x-goog-api-key':process.env.GEMINI_API_KEY}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7}}) });
     const j = await r.json();
     if (!r.ok) {
       const errMsg = j?.error?.message || 'Gemini request failed';
@@ -145,98 +145,165 @@ async function geminiContent(topic, level, angle) {
 }
 
 function svgSlide(text, index, total, duration) {
-  // Safely extract text from any object/array/string
   const lines = wrapText(text);
   const tspans = lines.map((line,i)=>`<tspan x="360" dy="${i===0?0:76}">${esc(line)}</tspan>`).join('');
   const progress = Math.round(((index+1)/total)*100);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#07111f"/><stop offset="1" stop-color="#102f45"/></linearGradient></defs>
-  <rect width="720" height="1280" fill="url(#g)"/>
-  <circle cx="620" cy="140" r="190" fill="#19d3ae" opacity=".08"/><circle cx="90" cy="1110" r="250" fill="#4ea1ff" opacity=".08"/>
-  <text x="42" y="70" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#19d3ae">${BRAND}</text>
-  <text x="42" y="112" font-family="Arial, sans-serif" font-size="17" fill="#b7c6d6">${TAGLINE}</text>
-  <line x1="42" y1="145" x2="678" y2="145" stroke="#29465b"/>
-  <text x="360" y="520" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="700" fill="#ffffff">${tspans}</text>
-  <rect x="42" y="1160" width="636" height="8" rx="4" fill="#243b50"/><rect x="42" y="1160" width="${636*progress/100}" height="8" rx="4" fill="#19d3ae"/>
-  <text x="42" y="1215" font-family="Arial, sans-serif" font-size="18" fill="#9db0c2">Educational content • Not financial advice</text>
-  <text x="678" y="1215" text-anchor="end" font-family="Arial, sans-serif" font-size="18" fill="#9db0c2">${index+1}/${total}</text>
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#07111f"/><stop offset="1" stop-color="#102f45"/></linearGradient></defs>
+    <rect width="720" height="1280" fill="url(#g)"/>
+    <circle cx="620" cy="140" r="190" fill="#19d3ae" opacity=".08"/><circle cx="90" cy="1110" r="250" fill="#4ea1ff" opacity=".08"/>
+    <text x="42" y="70" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#19d3ae">${BRAND}</text>
+    <text x="42" y="112" font-family="Arial, sans-serif" font-size="17" fill="#b7c6d6">${TAGLINE}</text>
+    <line x1="42" y1="145" x2="678" y2="145" stroke="#29465b"/>
+    <text x="360" y="520" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="700" fill="#ffffff">${tspans}</text>
+    <rect x="42" y="1160" width="636" height="8" rx="4" fill="#243b50"/><rect x="42" y="1160" width="${636*progress/100}" height="8" rx="4" fill="#19d3ae"/>
+    <text x="42" y="1215" font-family="Arial, sans-serif" font-size="18" fill="#9db0c2">Educational content • Not financial advice</text>
+    <text x="678" y="1215" text-anchor="end" font-family="Arial, sans-serif" font-size="18" fill="#9db0c2">${index+1}/${total}</text>
   </svg>`;
 }
 
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { maxBuffer: 10*1024*1024 }, (e, stdout, stderr) => {
-      if(e) return reject(new Error(stderr || e.message));
+    execFile(cmd, args, { maxBuffer: 20 * 1024 * 1024 }, (e, stdout, stderr) => {
+      if (e) return reject(new Error(stderr || e.message));
       resolve(stdout);
     });
   });
 }
 
-/**
- * Generate TTS audio narration
- * Falls back gracefully if API is not configured
- */
+function sanitizeNarrationText(text) {
+  if (!text || typeof text !== 'string') return '';
+  let clean = text
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .trim();
+
+  if (!clean) return '';
+  const max = 220;
+  return clean.length > max ? clean.slice(0, max) : clean;
+}
+
+function splitNarrationText(text, maxLen = 180) {
+  const clean = sanitizeNarrationText(text);
+  if (!clean) return [];
+  const words = clean.split(/\s+/).filter(Boolean);
+  const chunks = [];
+  let current = '';
+
+  for (const word of words) {
+    if ((current + ' ' + word).trim().length > maxLen) {
+      if (current.trim()) chunks.push(current.trim());
+      current = word;
+    } else {
+      current = (current + ' ' + word).trim();
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.length ? chunks : [clean];
+}
+
+async function probeMedia(filePath) {
+  try {
+    const result = await run(FFPROBE_PATH, [
+      '-v', 'error',
+      '-show_streams',
+      '-show_format',
+      '-print_format', 'json',
+      filePath
+    ]);
+    return JSON.parse(result);
+  } catch (error) {
+    console.error(`Probe failed for ${filePath}: ${error.message}`);
+    return null;
+  }
+}
+
 async function generateTTSAudio(text, jobDir) {
-  if (!process.env.GEMINI_API_KEY) {
-    console.log('TTS: No GEMINI_API_KEY configured, skipping audio generation');
+  const cleanText = sanitizeNarrationText(text);
+  if (!cleanText) {
+    console.log('TTS started');
+    console.log('Voice generation failed');
     return null;
   }
 
-  try {
-    const audioPath = path.join(jobDir, 'narration.wav');
-    
-    // Create a minimal silent WAV file as placeholder
-    const sampleRate = 44100;
-    const duration = 0.1;
-    const bufferSize = sampleRate * duration * 2;
-    const wavHeader = Buffer.alloc(44);
-    
-    wavHeader.write('RIFF', 0);
-    wavHeader.writeUInt32LE(bufferSize + 36, 4);
-    wavHeader.write('WAVE', 8);
-    wavHeader.write('fmt ', 12);
-    wavHeader.writeUInt32LE(16, 16);
-    wavHeader.writeUInt16LE(1, 20);
-    wavHeader.writeUInt16LE(1, 22);
-    wavHeader.writeUInt32LE(sampleRate, 24);
-    wavHeader.writeUInt32LE(sampleRate * 2, 28);
-    wavHeader.writeUInt16LE(2, 32);
-    wavHeader.writeUInt16LE(16, 34);
-    wavHeader.write('data', 36);
-    wavHeader.writeUInt32LE(bufferSize, 40);
-    
-    const audioData = Buffer.concat([wavHeader, Buffer.alloc(bufferSize)]);
-    fs.writeFileSync(audioPath, audioData);
-    
-    console.log(`TTS: Generated audio placeholder at ${audioPath}`);
-    return audioPath;
-  } catch(e) {
-    console.error(`TTS generation error: ${e.message}`);
+  console.log('TTS started');
+
+  const chunkList = splitNarrationText(cleanText);
+  const mp3Buffers = [];
+
+  for (const chunk of chunkList) {
+    const params = new URLSearchParams({
+      ie: 'UTF-8',
+      client: 'tw-ob',
+      tl: 'en',
+      q: chunk
+    });
+
+    const url = `https://translate.google.com/translate_tts?${params.toString()}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0 Safari/537.36'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`TTS request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const audioBuffer = Buffer.from(await response.arrayBuffer());
+    if (audioBuffer.length > 200) {
+      mp3Buffers.push(audioBuffer);
+    }
+  }
+
+  if (!mp3Buffers.length) {
+    console.log('Voice generation failed');
     return null;
   }
+
+  const audioPath = path.join(jobDir, 'narration.mp3');
+  fs.writeFileSync(audioPath, Buffer.concat(mp3Buffers));
+
+  const stats = fs.statSync(audioPath);
+  if (!stats || stats.size <= 0) {
+    console.log('Voice generation failed');
+    return null;
+  }
+
+  console.log('TTS audio generated');
+  console.log(`Audio file size: ${stats.size} bytes`);
+
+  const media = await probeMedia(audioPath);
+  const audioStream = media && media.streams && media.streams.find(s => s.codec_type === 'audio');
+
+  if (!audioStream || Number(audioStream.duration || 0) <= 0 || Number(audioStream.bit_rate || 0) <= 0) {
+    console.log('Voice generation failed');
+    return null;
+  }
+
+  return audioPath;
 }
 
 async function renderVideo(item) {
   const jobDir = path.join(VIDEO_DIR, item.id);
   fs.mkdirSync(jobDir, { recursive: true });
-  
-  const scenes = Array.isArray(item.scenes) && item.scenes.length 
-    ? item.scenes.slice(0, 8) 
+
+  const scenes = Array.isArray(item.scenes) && item.scenes.length
+    ? item.scenes.slice(0, 8)
     : fallbackContent(item.topic, item.level).scenes;
-  
+
   const duration = Math.max(15, Math.min(120, Number(item.duration) || 30));
   const each = duration / scenes.length;
   const files = [];
-  
-  // Render scenes to PNG slides
+
   for (let i = 0; i < scenes.length; i++) {
     const svg = svgSlide(scenes[i], i, scenes.length, duration);
     const png = path.join(jobDir, `slide-${i}.png`);
     await sharp(Buffer.from(svg)).png().toFile(png);
     files.push(png);
   }
-  
-  // Create FFmpeg concat file
+
   const list = path.join(jobDir, 'concat.txt');
   const concatLines = files.map(f => {
     const escapedPath = f.replace(/'/g, "'\\''");
@@ -244,10 +311,8 @@ async function renderVideo(item) {
   }).join('\n');
   const lastEscapedPath = files[files.length - 1].replace(/'/g, "'\\''");
   fs.writeFileSync(list, concatLines + `\nfile '${lastEscapedPath}'\n`);
-  
+
   const out = path.join(VIDEO_DIR, `${item.id}.mp4`);
-  
-  // Generate video without audio first
   const videoOnly = path.join(jobDir, 'video-only.mp4');
   await run(ffmpeg, [
     '-y', '-f', 'concat', '-safe', '0', '-i', list,
@@ -255,46 +320,66 @@ async function renderVideo(item) {
     '-r', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-t', duration.toString(),
     videoOnly
   ]);
-  
-  // Try to generate TTS audio
+
   const script = extractText(item.script || item.hook || item.title || item.topic);
   let audioPath = null;
-  
+
   if (script && script.length > 0) {
     audioPath = await generateTTSAudio(script, jobDir);
   }
-  
-  // If audio exists, merge with video; otherwise use video only
+
   if (audioPath && fs.existsSync(audioPath)) {
-    // Merge audio and video
-    await run(ffmpeg, [
-      '-y',
-      '-i', videoOnly,
-      '-i', audioPath,
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-map', '0:v:0',
-      '-map', '1:a:0',
-      out
-    ]);
-    item.hasAudio = true;
-  } else {
-    // Add silent audio track to ensure compatibility
-    await run(ffmpeg, [
-      '-y',
-      '-i', videoOnly,
-      '-f', 'lavfi', '-i', `anullsrc=r=44100:cl=mono`,
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-t', duration.toString(),
-      '-map', '0:v:0',
-      '-map', '1:a:0',
-      out
-    ]);
-    item.hasAudio = false;
-    item.audioStatus = 'Audio not configured';
+    const audioInfo = await probeMedia(audioPath);
+    const audioStream = audioInfo && audioInfo.streams && audioInfo.streams.find(s => s.codec_type === 'audio');
+
+    if (!audioStream || Number(audioStream.duration || 0) <= 0 || Number(audioStream.bit_rate || 0) <= 0) {
+      item.hasAudio = false;
+      item.audioStatus = 'Voice generation failed';
+      item.error = 'Audio file exists but contains no valid audio stream';
+      console.log('Voice generation failed');
+      return `/videos/${item.id}.mp4`;
+    }
+
+    try {
+      await run(ffmpeg, [
+        '-y',
+        '-i', videoOnly,
+        '-i', audioPath,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-shortest',
+        '-t', duration.toString(),
+        out
+      ]);
+
+      console.log('FFmpeg audio input detected');
+
+      const finalInfo = await probeMedia(out);
+      const finalAudio = finalInfo && finalInfo.streams && finalInfo.streams.find(s => s.codec_type === 'audio');
+
+      if (!finalAudio || Number(finalAudio.duration || 0) <= 0 || Number(finalAudio.bit_rate || 0) <= 0) {
+        throw new Error('Final MP4 audio stream missing or contains no non-zero audio data');
+      }
+
+      console.log('Final MP4 audio stream detected');
+      item.hasAudio = true;
+      item.audioStatus = 'Audio generated';
+      return `/videos/${item.id}.mp4`;
+    } catch (error) {
+      item.hasAudio = false;
+      item.audioStatus = 'Voice generation failed';
+      item.error = error.message;
+      console.error(`Audio merge failed for ${item.id}: ${error.message}`);
+      return `/videos/${item.id}.mp4`;
+    }
   }
-  
+
+  item.hasAudio = false;
+  item.audioStatus = 'Voice generation failed';
+  item.error = item.error || 'No usable narration audio generated';
+  console.log('Voice generation failed');
   return `/videos/${item.id}.mp4`;
 }
 
@@ -304,7 +389,7 @@ async function createItem(body) {
   const duration = Number(body.duration) || 30;
   const angle = String(body.angle || '').trim();
   const content = await geminiContent(topic, level, angle);
-  const item = { id: id(), createdAt: new Date().toISOString(), status: 'RENDERING', topic, level, duration, hasAudio: false, ...content, videoUrl: null };
+  const item = { id: id(), createdAt: new Date().toISOString(), status: 'RENDERING', topic, level, duration, hasAudio: false, audioStatus: 'Voice generation failed', ...content, videoUrl: null };
   const db = loadDB();
   db.items.unshift(item);
   saveDB(db);
@@ -318,7 +403,7 @@ async function createItem(body) {
   }
   const db2 = loadDB();
   const idx = db2.items.findIndex(x => x.id === item.id);
-  if(idx >= 0) db2.items[idx] = item;
+  if (idx >= 0) db2.items[idx] = item;
   saveDB(db2);
   return item;
 }
@@ -334,12 +419,18 @@ app.get('/api/status', (req, res) => {
   } else {
     statusMsg += ` • AI not yet tested • Model: ${aiStatus.model}`;
   }
-  let ttsStatus = 'TTS not configured';
-  if (process.env.GEMINI_API_KEY) {
-    ttsStatus = 'TTS ready (using Gemini)';
+
+  let ttsStatus = 'TTS ready (free Google Translate)';
+  if (TTS_API_KEY) {
+    ttsStatus = 'TTS configured (external API key)';
+  } else if (TTS_PROVIDER === 'google-translate') {
+    ttsStatus = 'TTS ready (free Google Translate)';
+  } else {
+    ttsStatus = 'TTS not configured';
   }
+
   statusMsg += ' • ' + ttsStatus;
-  res.json({ ok: true, brand: BRAND, geminiConfigured: !!process.env.GEMINI_API_KEY, model: GEMINI_MODEL, ffmpeg: !!ffmpeg, version: '1.0.0', statusMessage: statusMsg, aiStatus: aiStatus });
+  res.json({ ok: true, brand: BRAND, geminiConfigured: !!process.env.GEMINI_API_KEY, model: GEMINI_MODEL, ffmpeg: !!ffmpeg, version: '1.0.0', statusMessage: statusMsg, aiStatus: aiStatus, ttsStatus: ttsStatus });
 });
 
 app.get('/api/content', (req, res) => res.json(loadDB().items.slice(0, 50)));
